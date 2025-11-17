@@ -330,9 +330,9 @@
                 html += `
                     <div class="app-item" data-index="${i}">
                         <button class="delete-btn" onclick="window.deleteApplication(${i})" title="Delete">×</button>
-                        <strong>${app.company}</strong> - ${app.role}
-                        <span class="status-badge status-${app.status || 'applied'}" onclick="window.updateStatus(${i})" style="cursor: pointer;">${app.status || 'applied'}</span><br>
-                        <small style="color: #666;">Applied: ${app.date}</small>
+                        <strong>${app.company}</strong> - ${app.role}<br>
+                        <span class="status-badge status-${app.status || 'applied'}" onclick="window.updateStatus(${i})" style="cursor: pointer;">${app.status || 'applied'}</span>
+                        <small style="color: #666; margin-left: 8px;">Applied: ${app.date}</small>
                     </div>
                 `;
             }
@@ -601,52 +601,101 @@
 
             // ========== ROLE EXTRACTION PATTERNS ==========
 
-            // Pattern 1: Extract from "Your Application To [Company] - [Role]"
-            match = subject.match(/your\s+application.*?[-–—]\s*(.+?)(?:\s+applied)?$/i);
+            // Pattern 1: "Thanks for applying for [Role] position" or "Thanks for applying for the [Role]"
+            match = subject.match(/(?:thanks|thank you).*?(?:applying|application)\s+for\s+(?:the\s+)?(.+?)\s+(?:position|role)/i);
             if (match && match[1]) {
                 role = match[1].trim();
             }
 
-            // Pattern 2: Extract from "[Company] - [Role]" format
+            // Pattern 2: "Your candidacy for our [Role] role"
+            if (!role) {
+                match = subject.match(/candidacy\s+for\s+our\s+(.+?)\s+role/i);
+                if (match && match[1]) {
+                    role = match[1].trim();
+                }
+            }
+
+            // Pattern 3: "You have successfully submitted your [Company] job application - [Role]"
+            if (!role) {
+                match = subject.match(/job\s+application\s*[-–—]\s*(.+?)(?:\s+applied)?$/i);
+                if (match && match[1]) {
+                    role = match[1].trim();
+                }
+            }
+
+            // Pattern 4: "Your Application To [Company] - [Role]"
+            if (!role) {
+                match = subject.match(/your\s+application.*?[-–—]\s*(.+?)(?:\s+applied)?$/i);
+                if (match && match[1]) {
+                    role = match[1].trim();
+                }
+            }
+
+            // Pattern 5: "Thank you for your application for the [Role]"
+            if (!role) {
+                match = subject.match(/application\s+for\s+(?:the\s+)?(.+?)(?:\s+at\s+|\s+[-–—]|$)/i);
+                if (match && match[1]) {
+                    role = match[1].trim();
+                }
+            }
+
+            // Pattern 6: "[Number] - [Role]" (like "53118 - AI Engineer Intern")
+            if (!role) {
+                match = subject.match(/^\d+\s*[-–—]\s*(.+?)(?:\s+at\s+|\s+applied)?$/i);
+                if (match && match[1]) {
+                    role = match[1].trim();
+                }
+            }
+
+            // Pattern 7: "[Role] at [Company]" - extract role from before "at"
+            if (!role) {
+                match = subject.match(/^(.+?)\s+at\s+[A-Z]/);
+                if (match && match[1]) {
+                    const potentialRole = match[1].trim();
+                    // Filter out numbers/IDs at the start
+                    const cleanRole = potentialRole.replace(/^\d+\s*[-–—]\s*/, '');
+                    if (cleanRole.length > 0) {
+                        role = cleanRole;
+                    }
+                }
+            }
+
+            // Pattern 8: "Your Screening for [Role]" or "Application received for - [Role]"
+            if (!role) {
+                match = subject.match(/(?:screening|received)\s+for\s+(?:[-–—]\s*)?(.+?)(?:\s+has been|$)/i);
+                if (match && match[1]) {
+                    role = match[1].trim();
+                }
+            }
+
+            // Pattern 9: "[Company] - [Role]" format (but skip if role is generic)
             if (!role) {
                 match = subject.match(/^[^-–—]+[-–—]\s*(.+?)(?:\s+applied)?$/);
                 if (match && match[1]) {
                     const potentialRole = match[1].trim();
-                    // Make sure it's not just "Position" or something generic
-                    if (potentialRole.toLowerCase() !== 'position' && potentialRole.length > 3) {
+                    // Make sure it's not just "Position" or other generic terms
+                    const genericTerms = ['position', 'thank you', 'application received', 'update on position'];
+                    const isGeneric = genericTerms.some(term => potentialRole.toLowerCase() === term || potentialRole.toLowerCase().startsWith(term));
+                    if (!isGeneric && potentialRole.length > 3) {
                         role = potentialRole;
                     }
                 }
             }
 
-            // Pattern 3: Extract from "application for [Role]" or "applying for [Role]"
-            if (!role) {
-                match = subject.match(/(?:application|applying)\s+for\s+(?:the\s+)?(.+?)(?:\s+at\s+|\s+[-–—]|$)/i);
-                if (match && match[1]) {
-                    role = match[1].trim();
-                }
-            }
-
-            // Pattern 4: Extract from "[Role] at [Company]"
-            if (!role) {
-                match = subject.match(/^(.+?)\s+at\s+[A-Z]/);
-                if (match && match[1]) {
-                    role = match[1].trim();
-                }
-            }
-
-            // Pattern 5: Look for common job title keywords
+            // Pattern 10: Look for common job title keywords anywhere in subject
             if (!role) {
                 const rolePatterns = [
-                    /software\s+engineer(?:\s+intern(?:ship)?)?(?:\s+\d+)?/i,
-                    /product\s+manager(?:\s+intern(?:ship)?)?/i,
+                    /(?:software|swe)\s+engineer(?:\s+intern(?:ship)?)?(?:\s+\d+)?/i,
+                    /product\s+(?:manager|growth)(?:\s+intern(?:ship)?)?/i,
                     /data\s+(?:scientist|analyst|engineer)(?:\s+intern(?:ship)?)?/i,
-                    /(?:frontend|backend|full[\s-]?stack|mobile)\s+(?:engineer|developer)(?:\s+intern(?:ship)?)?/i,
-                    /(?:software|engineering|tech|swe)\s+intern(?:ship)?/i,
+                    /(?:ai|ml)\s+engineer(?:\s+intern(?:ship)?)?/i,
+                    /(?:frontend|backend|full[\s-]?stack|mobile|web)\s+(?:engineer|developer)(?:\s+intern(?:ship)?)?/i,
+                    /(?:software|engineering|tech)\s+intern(?:ship)?/i,
                     /intern(?:ship)?(?:\s+program)?/i,
-                    /(?:junior|senior)?\s*developer/i,
+                    /(?:junior|senior)\s+developer/i,
                     /(?:ux|ui)\s+designer/i,
-                    /business\s+analyst/i
+                    /business\s+analyst/i,
+                    /software\s+developer/i
                 ];
 
                 for (const pattern of rolePatterns) {
@@ -661,16 +710,24 @@
             // Clean up role
             if (role) {
                 role = role
-                    .replace(/\s+/g, ' ')
-                    .replace(/\s*\d{4}\s*$/g, '') // Remove year
+                    .replace(/\s+/g, ' ') // Normalize whitespace
+                    .replace(/\([^)]*\)/g, '') // Remove all parentheticals (like "(US Remote", "(32964)", etc.)
+                    .replace(/\s*[-–—]\s*\d{4}\s*$/g, '') // Remove year with dash
+                    .replace(/\s*\d{4}\s*$/g, '') // Remove trailing year
                     .replace(/\s*[-–—]\s*$/g, '') // Remove trailing dashes
                     .replace(/\s*applied\s*$/i, '') // Remove "applied" suffix
-                    .replace(/\s*\([^)]*\)\s*$/g, '') // Remove trailing parentheticals like "(US Remote"
+                    .replace(/\s+has been.*$/i, '') // Remove "has been successfully submitted" etc.
+                    .replace(/\s*position\s+at\s+.+$/i, '') // Remove "position at [Company]"
+                    .replace(/\s*role\s+at\s+.+$/i, '') // Remove "role at [Company]"
+                    .replace(/^\d+\s*[-–—]\s*/, '') // Remove leading job IDs like "53118 - "
                     .replace(/^(position|role|job)\s*[:-]?\s*/i, '') // Remove generic prefixes
+                    .replace(/[!.,;]+$/, '') // Remove trailing punctuation
+                    .replace(/\s+/g, ' ') // Normalize whitespace again
                     .trim();
 
                 // If role is too generic or short, discard it
-                if (role.toLowerCase() === 'position' || role.length < 4) {
+                const genericRoles = ['position', 'role', 'job', 'application', 'thank you', 'your application'];
+                if (genericRoles.includes(role.toLowerCase()) || role.length < 4) {
                     role = '';
                 }
             }
