@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>application tracker</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap');
+        
+        body {
+            font-family: 'DM Sans', sans-serif;
+            max-width: 650px;
+            margin: 50px auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #ffeef8 0%, #e0f4ff 100%);
+            min-height: 100vh;
+        }
+        .container {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 8px 32px rgba(31, 38, 135, 0.15);
+            backdrop-filter: blur(10px);
+        }
+        h1 {
+            color: #ff6b9d;
+            font-weight: 700;
+            margin-bottom: 20px;
+            text-align: center;
+            margin-top: 0;
+        }
+        .button-container {
+            text-align: center;
+        }
+        button {
+            background: linear-gradient(135deg, #ff6b9d 0%, #c06c84 100%);
+            color: white;
+            border: none;
+            padding: 14px 28px;
+            border-radius: 12px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 500;
+            margin-bottom: 30px;
+            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 4px 15px rgba(255, 107, 157, 0.3);
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(255, 107, 157, 0.4);
+        }
+        .app-list {
+            margin-top: 20px;
+        }
+        .app-item {
+            padding: 18px;
+            background: linear-gradient(135deg, #fff5f8 0%, #f0f9ff 100%);
+            margin-bottom: 12px;
+            border-radius: 12px;
+            border-left: 4px solid #ff6b9d;
+            transition: transform 0.2s;
+        }
+        .app-item:hover {
+            transform: translateX(5px);
+        }
+        .app-item strong {
+            color: #ff6b9d;
+            font-weight: 600;
+            font-size: 18px;
+        }
+        small {
+            color: #8b93a7;
+            font-size: 13px;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 10px;
+            text-transform: uppercase;
+        }
+        .status-applied {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+        .status-oa {
+            background: #fef3c7;
+            color: #92400e;
+        }
+        .status-interview {
+            background: #e9d5ff;
+            color: #6b21a8;
+        }
+        .status-offer {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        .status-rejected {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        .stats-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: linear-gradient(135deg, #fff5f8 0%, #f0f9ff 100%);
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+            border: 2px solid #ffe0ec;
+        }
+        .stat-number {
+            font-size: 32px;
+            font-weight: 700;
+            color: #ff6b9d;
+            margin-bottom: 5px;
+        }
+        .stat-label {
+            font-size: 13px;
+            color: #8b93a7;
+            text-transform: uppercase;
+            font-weight: 500;
+        }
+        .stat-trend {
+            font-size: 12px;
+            margin-top: 5px;
+            font-weight: 600;
+        }
+        .trend-up {
+            color: #10b981;
+        }
+        .trend-down {
+            color: #ef4444;
+        }
+        .stats-section {
+            margin-bottom: 40px;
+            padding-bottom: 30px;
+            border-bottom: 2px solid #ffe0ec;
+        }
+        .history-section h2 {
+            color: #ff6b9d;
+            font-weight: 600;
+            font-size: 20px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 application tracker 🚀</h1>
+        
+        <div class="stats-section">
+            <div class="stats-container" id="statsContainer">
+                <!-- Stats will be inserted here -->
+            </div>
+        </div>
+        
+        <div class="history-section">
+            <h2>application history</h2>
+            <div class="button-container">
+                <button onClick="logApplication()">log application</button>
+            </div>
+            <div class="app-list" id="applicationList">
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function logApplication() {
+            const company = prompt("company:");
+            if (!company) return;
+            
+            const role = prompt("role:");
+            if (!role) return;
+
+            const status = prompt("status:", "applied");
+            if (!status) return;
+
+            const application = {
+                company: company,
+                role: role,
+                status: status.toLowerCase(),
+                date: new Date().toLocaleDateString()
+            };
+
+            let applications = JSON.parse(localStorage.getItem('applications') || '[]');
+            applications.push(application);
+            localStorage.setItem('applications', JSON.stringify(applications));
+
+            displayApplications();
+            displayStats();
+        }
+
+        function displayApplications() {
+            const applications = JSON.parse(localStorage.getItem('applications') || '[]');
+            const listDiv = document.getElementById('applicationList');
+            
+            if (applications.length === 0) {
+                listDiv.innerHTML = '<p style="color: #999;">no applications yet. click the button to log your first one!</p>';
+                return;
+            }
+
+            listDiv.innerHTML = applications.map((app, index) => `
+                <div class="app-item">
+                    <strong>${app.company}</strong> - ${app.role}
+                    <span class="status-badge status-${app.status || 'applied'}" onclick="updateStatus(${applications.length - 1 - index})" style="cursor: pointer;">${app.status || 'applied'}</span><br>
+                    <small style="color: #666;">Applied: ${app.date}</small>
+                </div>
+            `).reverse().join('');
+        }
+
+        function updateStatus(index) {
+            let applications = JSON.parse(localStorage.getItem('applications') || '[]');
+            const newStatus = prompt("new status:", applications[index].status);
+            
+            if (newStatus) {
+                applications[index].status = newStatus.toLowerCase();
+                localStorage.setItem('applications', JSON.stringify(applications));
+                displayApplications();
+                displayStats();
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', function() {
+            displayApplications();
+            displayStats();
+        });
+
+        function displayStats() {
+            const applications = JSON.parse(localStorage.getItem('applications') || '[]');
+            const statsDiv = document.getElementById('statsContainer');
+            
+            if (applications.length === 0) {
+                statsDiv.innerHTML = '';
+                return;
+            }
+
+            const totalApps = applications.length;
+            const responded = applications.filter(app => 
+                ['oa', 'interview', 'offer', 'rejected'].includes(app.status)
+            ).length;
+            const responseRate = totalApps > 0 ? Math.round((responded / totalApps) * 100) : 0;
+            
+            const offers = applications.filter(app => app.status === 'offer').length;
+            const interviews = applications.filter(app => app.status === 'interview').length;
+            const rejected = applications.filter(app => app.status === 'rejected').length;
+            
+            const successRate = responded > 0 ? Math.round(((interviews + offers) / responded) * 100) : 0;
+
+            statsDiv.innerHTML = `
+                <div class="stat-card">
+                    <div class="stat-number">${totalApps}</div>
+                    <div class="stat-label">Total Applied</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">${responseRate}%</div>
+                    <div class="stat-label">Response Rate</div>
+                    <div class="stat-trend ${responseRate >= 30 ? 'trend-up' : 'trend-down'}">
+                        ${responseRate >= 30 ? '📈 good!' : '📊 keep going!'}
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">${successRate}%</div>
+                    <div class="stat-label">Success Rate</div>
+                    <div class="stat-trend ${successRate >= 50 ? 'trend-up' : 'trend-down'}">
+                        ${successRate >= 50 ? '🔥 hot!' : '💪 building up!'}
+                    </div>
+                </div>
+            `;
+        }
+    </script>
+</body>
+</html>
