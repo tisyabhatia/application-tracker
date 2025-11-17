@@ -274,6 +274,32 @@
                 </div>
             `;
         }
+        function checkURLParams() {
+            const params = new URLSearchParams(window.location.search);
+            if (params.has('company')) {
+                const app = {
+                    company: params.get('company'),
+                    role: params.get('role'),
+                    status: params.get('status') || 'applied',
+                    date: new Date().toLocaleDateString(),
+                    url: params.get('url') || ''
+                };
+                
+                let applications = JSON.parse(localStorage.getItem('applications') || '[]');
+                applications.push(app);
+                localStorage.setItem('applications', JSON.stringify(applications));
+                
+                window.history.replaceState({}, document.title, window.location.pathname);
+                displayApplications();
+                displayStats();
+            }
+        }
+        window.addEventListener('DOMContentLoaded', function() {
+            checkURLParams();
+            displayApplications();
+            displayStats();
+        });
     </script>
 </body>
+
 </html>
