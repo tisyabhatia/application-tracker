@@ -244,15 +244,23 @@
                 listDiv.innerHTML = '<p style="color: #999;">no applications yet. click the button to log your first one!</p>';
                 return;
             }
-        
-            listDiv.innerHTML = applications.map((app, index) => `
-                <div class="app-item">
-                    <button class="delete-btn" onclick="deleteApplication(${applications.length - 1 - index})" title="Delete">×</button>
-                    <strong>${app.company}</strong> - ${app.role}
-                    <span class="status-badge status-${app.status || 'applied'}" onclick="updateStatus(${applications.length - 1 - index})" style="cursor: pointer;">${app.status || 'applied'}</span><br>
-                    <small style="color: #666;">Applied: ${app.date}</small>
-                </div>
-            `).reverse().join('');
+
+            // Show newest first by reversing the array
+            const reversed = [...applications].reverse();
+            
+            listDiv.innerHTML = reversed.map((app, displayIndex) => {
+                // Calculate the actual index in the original array
+                const actualIndex = applications.length - 1 - displayIndex;
+                
+                return `
+                    <div class="app-item">
+                        <button class="delete-btn" onclick="deleteApplication(${actualIndex})" title="Delete">×</button>
+                        <strong>${app.company}</strong> - ${app.role}
+                        <span class="status-badge status-${app.status || 'applied'}" onclick="updateStatus(${actualIndex})" style="cursor: pointer;">${app.status || 'applied'}</span><br>
+                        <small style="color: #666;">Applied: ${app.date}</small>
+                    </div>
+                `;
+            }).join('');
         }
 
         function updateStatus(index) {
