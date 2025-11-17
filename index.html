@@ -423,10 +423,7 @@
             try {
                 // Better search queries to find more application emails
                 const queries = [
-                    'subject:(application OR applied OR applying) after:2024/09/01',
-                    'subject:"thank you for" after:2024/09/01',
-                    'subject:confirmation after:2024/09/01',
-                    'from:(noreply OR jobs OR recruiting OR talent) after:2024/09/01'
+                    'is:starred after:2024/08/01'
                 ];
                 
                 let allApplications = [];
