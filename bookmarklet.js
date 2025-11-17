@@ -25,5 +25,5 @@ javascript:(function(){
     applications.push(application);
     localStorage.setItem('applications', JSON.stringify(applications));
     
-    alert(`✅ Logged: ${company} - ${role}`);
+    alert(`✅ logged: ${company} - ${role}`);
 })();
