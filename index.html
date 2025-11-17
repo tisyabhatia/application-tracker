@@ -192,6 +192,7 @@
             <div class="button-container">
                 <button onclick="window.logApplication()">log application</button>
                 <button onclick="window.syncGmail()" style="background: linear-gradient(135deg, #a78bfa 0%, #8b5cf6 100%);">sync from gmail</button>
+                <button onclick="window.cleanupBadEntries()" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);">cleanup bad entries</button>
             </div>
             <div class="app-list" id="applicationList"></div>
             <div class="button-container">
@@ -258,7 +259,61 @@
                 }
             }
         };
-        
+
+        window.cleanupBadEntries = function() {
+            const applications = JSON.parse(localStorage.getItem('applications') || '[]');
+            const originalCount = applications.length;
+
+            // Lists of bad company names and generic senders
+            const atsSystems = ['jobvite', 'greenhouse', 'lever', 'myworkday', 'workday', 'smartrecruiters', 'hirevue', 'codesignal', 'hackerrank', 'hackerrankforwork', 'applytojob', 'usastaffing', 'appreview', 'clearcompany', 'ashbyhq'];
+            const genericSenders = ['jobs', 'talent', 'recruiting', 'hire', 'us', 're', 'agent', 'life', 'workflow', 'help', 'noreply', 'mail', 'careers', 'emerging talent recruiting'];
+            const badCompanies = ['the intern', 'action required', 'this thursday', 'employee referrals', 'amazon application', 'johnson', 'application', 'email', 'thank you'];
+
+            // Filter out bad entries
+            const cleanedApplications = applications.filter(app => {
+                const companyLower = app.company.toLowerCase().trim();
+                const roleLower = (app.role || '').toLowerCase().trim();
+
+                // Remove if company is in any of the bad lists
+                if (atsSystems.includes(companyLower) ||
+                    genericSenders.includes(companyLower) ||
+                    badCompanies.some(bad => companyLower.includes(bad))) {
+                    return false;
+                }
+
+                // Remove if company is too short
+                if (app.company.length < 2) {
+                    return false;
+                }
+
+                // Remove if both company and role are generic
+                if ((companyLower === 'position' || companyLower === 'application') &&
+                    (roleLower === 'position' || roleLower === 'position applied')) {
+                    return false;
+                }
+
+                return true;
+            });
+
+            const removedCount = originalCount - cleanedApplications.length;
+
+            if (removedCount > 0) {
+                if (confirm(`Found ${removedCount} bad entries. Remove them?`)) {
+                    localStorage.setItem('applications', JSON.stringify(cleanedApplications));
+                    displayApplications();
+                    displayStats();
+
+                    const toast = document.createElement('div');
+                    toast.innerHTML = `✅ Removed ${removedCount} bad entries!`;
+                    toast.style.cssText = 'position:fixed;top:20px;right:20px;background:#10b981;color:white;padding:16px 24px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:1000;font-weight:600;';
+                    document.body.appendChild(toast);
+                    setTimeout(() => document.body.removeChild(toast), 3000);
+                }
+            } else {
+                alert('No bad entries found! Your data looks good.');
+            }
+        };
+
         function displayApplications() {
             const applications = JSON.parse(localStorage.getItem('applications') || '[]');
             const listDiv = document.getElementById('applicationList');
@@ -444,61 +499,193 @@
             const subject = headers.find(h => h.name === 'Subject')?.value || '';
             const from = headers.find(h => h.name === 'From')?.value || '';
             const dateHeader = headers.find(h => h.name === 'Date')?.value || '';
-            
-            // Skip noise
-            const skipWords = ['alert', 'verification', 'sign-in', 'password', 'action required', 'reminder', 'event', 'thursday', 'employee referrals'];
+            const snippet = message.snippet || '';
+
+            // Skip noise emails
+            const skipWords = ['alert', 'verification', 'sign-in', 'password', 'action required', 'reminder', 'event', 'thursday', 'employee referrals', 'application update', 're:'];
             if (skipWords.some(word => subject.toLowerCase().includes(word))) {
                 return null;
             }
-            
+
             let company = '';
             let role = '';
-            
-            // Extract company
-            let match = subject.match(/(?:applying|application)\s+(?:to|at)\s+([A-Z][a-zA-Z\s&.'-]+?)(?:\s*[!,]|\s*$)/i);
+
+            // ATS systems and generic senders to ignore as company names
+            const atsSystems = ['jobvite', 'greenhouse', 'lever', 'myworkday', 'workday', 'smartrecruiters', 'hirevue', 'codesignal', 'hackerrank', 'hackerrankforwork', 'applytojob', 'usastaffing', 'appreview', 'clearcompany', 'ashbyhq'];
+            const genericSenders = ['jobs', 'talent', 'recruiting', 'hire', 'us', 're', 'agent', 'life', 'workflow', 'help', 'noreply', 'mail', 'careers'];
+
+            // ========== COMPANY EXTRACTION PATTERNS (in priority order) ==========
+
+            // Pattern 1: "Your Application To [Company]" or "Your application to [Company]"
+            let match = subject.match(/your\s+application\s+(?:to|at)\s+([A-Z][a-zA-Z\s&.,'()-]+?)(?:\s*[-–—]|$)/i);
             if (match && match[1]) {
                 company = match[1].trim();
             }
-            
+
+            // Pattern 2: "Thank you for your application to [Company]" or "Thank you for applying to [Company]"
             if (!company) {
-                match = subject.match(/^([A-Z][a-zA-Z\s&.'-]+?)\s*[-:]/);
+                match = subject.match(/thank\s+you.*?(?:application|applying)\s+(?:to|at)\s+([A-Z][a-zA-Z\s&.,'()-]+?)(?:\s*[-–—]|$)/i);
                 if (match && match[1]) {
                     company = match[1].trim();
                 }
             }
-            
-            if (!company && from.includes('@')) {
-                const emailMatch = from.match(/@([a-zA-Z0-9-]+)\./);
-                if (emailMatch) {
-                    const domain = emailMatch[1];
-                    const badDomains = ['myworkday', 'greenhouse', 'lever', 'noreply', 'mail', 'hirevue', 'casestudy', 'codesignal', 'gmail'];
-                    if (!badDomains.includes(domain.toLowerCase())) {
-                        company = domain.charAt(0).toUpperCase() + domain.slice(1);
+
+            // Pattern 3: "You have successfully submitted your [Company] job application"
+            if (!company) {
+                match = subject.match(/submitted\s+your\s+([A-Z][a-zA-Z\s&.,'()-]+?)\s+job\s+application/i);
+                if (match && match[1]) {
+                    company = match[1].trim();
+                }
+            }
+
+            // Pattern 4: "[Role] at [Company]" - extract company from "at [Company]"
+            if (!company) {
+                match = subject.match(/\s+at\s+([A-Z][a-zA-Z\s&.,'()-]+?)(?:\s*[-–—(]|$)/i);
+                if (match && match[1]) {
+                    company = match[1].trim();
+                }
+            }
+
+            // Pattern 5: "Application received for - [Role] applied" - look for company in "from" field
+            // This will be handled by the email domain extraction below, but more carefully
+
+            // Pattern 6: "[Company] - [something]" at start of subject (but not if it's an ATS system)
+            if (!company) {
+                match = subject.match(/^([A-Z][a-zA-Z\s&.,'()-]+?)\s*[-–—]/);
+                if (match && match[1]) {
+                    const potential = match[1].trim().toLowerCase();
+                    // Only use if it's not an ATS system or generic sender
+                    if (!atsSystems.includes(potential) && !genericSenders.includes(potential)) {
+                        company = match[1].trim();
                     }
                 }
             }
-            
-            // Skip bad companies
-            const badCompanies = ['the intern', 'action required', 'this thursday', 'gmail', 'employee referrals', 'amazon application', 'johnson'];
-            if (!company || badCompanies.some(bad => company.toLowerCase().includes(bad))) {
-                return null;
+
+            // Pattern 7: "Application for [Role] at [Company]"
+            if (!company) {
+                match = subject.match(/application\s+for.*?\s+at\s+([A-Z][a-zA-Z\s&.,'()-]+?)(?:\s*[-–—(]|$)/i);
+                if (match && match[1]) {
+                    company = match[1].trim();
+                }
             }
-            
-            // Extract role
-            const roleMatch = subject.match(/(software engineer|product manager|data scientist|engineer|intern|developer|analyst|designer)[^-!,]*/i);
-            if (roleMatch) {
-                role = roleMatch[0].trim()
-                    .replace(/\s*\d{4}\s*$/g, '')
-                    .replace(/\s*[-–]\s*$/, '')
+
+            // Pattern 8: Extract from email domain (ONLY as last resort and with strict filtering)
+            if (!company && from.includes('@')) {
+                const emailMatch = from.match(/@([a-zA-Z0-9-]+)\./);
+                if (emailMatch) {
+                    const domain = emailMatch[1].toLowerCase();
+                    // Only use domain if it's NOT in our exclusion lists
+                    if (!atsSystems.includes(domain) && !genericSenders.includes(domain)) {
+                        // Additional check: domain should be at least 4 chars and not be common words
+                        const commonWords = ['info', 'hello', 'support', 'admin', 'team', 'contact'];
+                        if (domain.length >= 4 && !commonWords.includes(domain)) {
+                            company = domain.charAt(0).toUpperCase() + domain.slice(1);
+                        }
+                    }
+                }
+            }
+
+            // Clean up company name
+            if (company) {
+                company = company
+                    .replace(/\s+/g, ' ')
+                    .replace(/[,\.]+$/, '')
                     .trim();
             }
-            
+
+            // Skip if company is still bad
+            const badCompanies = ['the intern', 'action required', 'this thursday', 'employee referrals', 'amazon application', 'johnson', 'position', 'application', 'email'];
+            if (!company || company.length < 2 || badCompanies.some(bad => company.toLowerCase().includes(bad))) {
+                return null;
+            }
+
+            // ========== ROLE EXTRACTION PATTERNS ==========
+
+            // Pattern 1: Extract from "Your Application To [Company] - [Role]"
+            match = subject.match(/your\s+application.*?[-–—]\s*(.+?)(?:\s+applied)?$/i);
+            if (match && match[1]) {
+                role = match[1].trim();
+            }
+
+            // Pattern 2: Extract from "[Company] - [Role]" format
+            if (!role) {
+                match = subject.match(/^[^-–—]+[-–—]\s*(.+?)(?:\s+applied)?$/);
+                if (match && match[1]) {
+                    const potentialRole = match[1].trim();
+                    // Make sure it's not just "Position" or something generic
+                    if (potentialRole.toLowerCase() !== 'position' && potentialRole.length > 3) {
+                        role = potentialRole;
+                    }
+                }
+            }
+
+            // Pattern 3: Extract from "application for [Role]" or "applying for [Role]"
+            if (!role) {
+                match = subject.match(/(?:application|applying)\s+for\s+(?:the\s+)?(.+?)(?:\s+at\s+|\s+[-–—]|$)/i);
+                if (match && match[1]) {
+                    role = match[1].trim();
+                }
+            }
+
+            // Pattern 4: Extract from "[Role] at [Company]"
+            if (!role) {
+                match = subject.match(/^(.+?)\s+at\s+[A-Z]/);
+                if (match && match[1]) {
+                    role = match[1].trim();
+                }
+            }
+
+            // Pattern 5: Look for common job title keywords
+            if (!role) {
+                const rolePatterns = [
+                    /software\s+engineer(?:\s+intern(?:ship)?)?(?:\s+\d+)?/i,
+                    /product\s+manager(?:\s+intern(?:ship)?)?/i,
+                    /data\s+(?:scientist|analyst|engineer)(?:\s+intern(?:ship)?)?/i,
+                    /(?:frontend|backend|full[\s-]?stack|mobile)\s+(?:engineer|developer)(?:\s+intern(?:ship)?)?/i,
+                    /(?:software|engineering|tech|swe)\s+intern(?:ship)?/i,
+                    /intern(?:ship)?(?:\s+program)?/i,
+                    /(?:junior|senior)?\s*developer/i,
+                    /(?:ux|ui)\s+designer/i,
+                    /business\s+analyst/i
+                ];
+
+                for (const pattern of rolePatterns) {
+                    const roleMatch = subject.match(pattern);
+                    if (roleMatch) {
+                        role = roleMatch[0].trim();
+                        break;
+                    }
+                }
+            }
+
+            // Clean up role
+            if (role) {
+                role = role
+                    .replace(/\s+/g, ' ')
+                    .replace(/\s*\d{4}\s*$/g, '') // Remove year
+                    .replace(/\s*[-–—]\s*$/g, '') // Remove trailing dashes
+                    .replace(/\s*applied\s*$/i, '') // Remove "applied" suffix
+                    .replace(/\s*\([^)]*\)\s*$/g, '') // Remove trailing parentheticals like "(US Remote"
+                    .replace(/^(position|role|job)\s*[:-]?\s*/i, '') // Remove generic prefixes
+                    .trim();
+
+                // If role is too generic or short, discard it
+                if (role.toLowerCase() === 'position' || role.length < 4) {
+                    role = '';
+                }
+            }
+
             // Validate date
             const date = new Date(dateHeader);
             if (isNaN(date.getTime())) {
                 return null;
             }
-            
+
+            // Final validation: we must have at least a company
+            if (!company) {
+                return null;
+            }
+
             return {
                 company: company,
                 role: role || 'Position',
