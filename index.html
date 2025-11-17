@@ -460,7 +460,7 @@
                             
                             const detail = await detailResponse.json();
                             const parsed = parseApplicationEmail(detail);
-                            if (parsed && parsed.company !== 'Unknown Company') {
+                            if (parsed) {  // Just check if parsed exists (not null)
                                 allApplications.push(parsed);
                             }
                         }
@@ -512,6 +512,36 @@
             const from = headers.find(h => h.name === 'From')?.value || '';
             const dateHeader = headers.find(h => h.name === 'Date')?.value || '';
             
+            // FILTER OUT NOISE - Skip these entirely
+            const skipPatterns = [
+                /job alert/i,
+                /verification code/i,
+                /password reset/i,
+                /sign.?in/i,
+                /celebrating/i,
+                /appointment/i,
+                /reminder/i,
+                /action required/i,
+                /complete your/i,
+                /completing your/i,
+                /taking the/i,
+                /new sign/i,
+                /alert:/i,
+                /recently posted/i,
+            ];
+            
+            // Check subject against skip patterns
+            if (skipPatterns.some(pattern => pattern.test(subject))) {
+                return null;
+            }
+            
+            // Skip emails from notification/alert domains
+            const skipDomains = ['linkedin', 'glassdoor', 'meta', 'notifications', 'jobalerts', 'emailrelay', 'applytojob'];
+            const fromLower = from.toLowerCase();
+            if (skipDomains.some(domain => fromLower.includes(domain))) {
+                return null;
+            }
+            
             let body = '';
             if (message.payload.parts) {
                 const textPart = message.payload.parts.find(part => part.mimeType === 'text/plain');
@@ -527,68 +557,78 @@
             let company = '';
             let role = '';
             
-            // Extract company - try multiple methods
-            // Method 1: Common subject patterns
+            // Extract company - improved patterns
             const companyPatterns = [
-                /at ([A-Z][a-zA-Z\s&.]+?)(?:\s+[-–|!]|$)/,
-                /to ([A-Z][a-zA-Z\s&.]+?)(?:\s+[-–|!]|$)/,
-                /with ([A-Z][a-zA-Z\s&.]+?)(?:\s+[-–|!])/,
+                /(?:applying to|application to|your application to|your interest in|at)\s+([A-Z][a-zA-Z\s&.]+?)(?:\s+[-–|!,]|$)/i,
                 /^([A-Z][a-zA-Z\s&.]+?)\s*[-–:]/,
-                /from ([A-Z][a-zA-Z\s&.]+?)(?:\s+[-–])/
+                /from\s+([A-Z][a-zA-Z\s&.]+?)(?:\s+[-–])/i
             ];
             
             for (const pattern of companyPatterns) {
                 const match = subject.match(pattern);
                 if (match && match[1]) {
                     let potential = match[1].trim();
-                    const badWords = ['Application', 'Thanks', 'Thank', 'Confirmation', 'Your', 'Job', 'Position', 'Application received', 'Applying'];
-                    if (!badWords.some(word => potential.includes(word)) && potential.length > 2 && potential.length < 35) {
+                    const badWords = ['Application', 'Thanks', 'Thank', 'Confirmation', 'Your', 'Job', 'Position', 'Employee Referrals', 'Hi', 'Us', 'Info', 'Talent', 'Jobs', 'State', 'Life', 'Hire', 'Agent'];
+                    if (!badWords.includes(potential) && potential.length > 2 && potential.length < 40) {
                         company = potential;
                         break;
                     }
                 }
             }
             
-            // Method 2: From email domain
+            // Fallback to email domain if no company found
             if (!company && from.includes('@')) {
                 const emailMatch = from.match(/@([a-zA-Z0-9-]+)\./);
                 if (emailMatch) {
                     const domain = emailMatch[1];
-                    const badDomains = ['myworkday', 'greenhouse', 'lever', 'ashbyhq', 'jobvite', 'mail', 'email', 'noreply'];
+                    const badDomains = ['myworkday', 'greenhouse', 'lever', 'ashbyhq', 'jobvite', 'mail', 'email', 'noreply', 'recruiting', 'talent', 'hire', 'jobs', 'careers', 'us', 'info', 'workflow', 'notifications', 'invalidemail'];
                     if (!badDomains.includes(domain.toLowerCase())) {
                         company = domain.charAt(0).toUpperCase() + domain.slice(1);
                     }
                 }
             }
             
-            // Extract role
+            // Skip if still no valid company
+            if (!company || company === 'Unknown Company') {
+                return null;
+            }
+            
+            // Extract role - improved patterns
             const rolePatterns = [
-                /for (?:the |a |an )?([^-–|!]+?)(?:\s+at|\s+position|\s+role|\s*[-–|!]|$)/i,
-                /position[:\s]+([^-–|!]+?)(?:\s+at|\s*[-–|!]|$)/i,
-                /([A-Z][a-zA-Z\s]+?(?:Engineer|Developer|Manager|Intern|Analyst|Designer|Scientist|Architect)[^-–|!]*?)(?:\s+at|\s*[-–|]|$)/i,
+                /for (?:the |a |an )?([^-–|!,]+?)(?:\s+at|\s+position|\s+role|\s*[-–|!,]|$)/i,
+                /(?:intern|engineer|developer|manager|analyst|designer|scientist|architect)[^-–|!,]*?(?:\s+intern)?/i,
+                /position[:\s]+([^-–|!,]+?)(?:\s+at|\s*[-–|!,]|$)/i,
             ];
             
             for (const pattern of rolePatterns) {
                 const match = subject.match(pattern);
-                if (match && match[1] && match[1].trim().length > 3) {
-                    role = match[1].trim()
-                        .replace(/^(Job Application for|Application for|Applied for)\s*/i, '')
+                if (match && match[0]) {
+                    role = match[0].trim()
+                        .replace(/^(Job Application for|Application for|Applied for|for the|for a|for an)\s*/i, '')
                         .replace(/\s*\d{4}\s*$/g, '')
                         .replace(/\([^)]*\)/g, '')
+                        .replace(/\s+(at|position|role)\s*$/i, '')
                         .trim();
                     if (role.length > 3 && role.length < 80) break;
                 }
             }
             
+            // Clean up role
             if (role) {
                 role = role
-                    .replace(/\s+(opening|opportunity)$/i, '')
+                    .replace(/\s+(opening|opportunity|applied)$/i, '')
+                    .replace(/^(your |the |a |an )/i, '')
                     .trim();
             }
             
+            // Validate we got something useful
+            if (!role || role === 'Position' || role.length < 3) {
+                role = 'Position';
+            }
+            
             return {
-                company: company || 'Unknown Company',
-                role: role || 'Position',
+                company: company,
+                role: role,
                 status: 'applied',
                 date: new Date(dateHeader).toLocaleDateString(),
                 timestamp: new Date(dateHeader).getTime()
