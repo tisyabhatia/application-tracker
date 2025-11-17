@@ -149,6 +149,16 @@
             margin-bottom: 20px;
             text-align: center;
         }
+        @keyframes slideIn {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
     </style>
 </head>
 <body>
@@ -299,7 +309,34 @@
             displayApplications();
             displayStats();
         });
+        
+        window.addEventListener('message', function(event) {
+            // Security check - only accept from your bookmarklet
+            if (event.data && event.data.type === 'NEW_APPLICATION') {
+                const app = {
+                    company: event.data.company,
+                    role: event.data.role,
+                    status: event.data.status,
+                    date: new Date().toLocaleDateString(),
+                    url: event.data.url
+                };
+                
+                let applications = JSON.parse(localStorage.getItem('applications') || '[]');
+                applications.push(app);
+                localStorage.setItem('applications', JSON.stringify(applications));
+                
+                displayApplications();
+                displayStats();
+                
+                const toast = document.createElement('div');
+                toast.innerHTML = `✅ Added: ${app.company} - ${app.role}`;
+                toast.style.cssText = 'position:fixed;top:20px;right:20px;background:#10b981;color:white;padding:16px 24px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:1000;font-weight:600;animation:slideIn 0.3s ease;';
+                document.body.appendChild(toast);
+                setTimeout(() => document.body.removeChild(toast), 3000);
+            }
+        });
     </script>
 </body>
 
 </html>
+
