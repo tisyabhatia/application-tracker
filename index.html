@@ -466,7 +466,8 @@ Return the JSON now:`;
                 });
 
                 if (!response.ok) {
-                    console.error('Gemini API error:', response.status);
+                    const errorText = await response.text();
+                    console.error('Gemini API error:', response.status, errorText);
                     return null;
                 }
 
