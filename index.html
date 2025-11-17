@@ -387,10 +387,15 @@
             displayStats();
         });
         
-        const CLIENT_ID = '386802220672-rnghdt2ju3g388vv9oagu5i9dckp07s6.apps.googleusercontent.com'; 
+        // Google OAuth Configuration
+        const CLIENT_ID = '386802220672-rnghdt2ju3g388vv9oagu5i9dckp07s6.apps.googleusercontent.com';
         const SCOPES = 'https://www.googleapis.com/auth/gmail.readonly';
         let tokenClient;
         let accessToken = null;
+
+        // Gemini API Configuration
+        const GEMINI_API_KEY = 'AIzaSyAGJX83jCmK42tBz8Nz0T8z7xaGHCVSBx4';
+        const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent';
         
         function initializeGoogleAuth() {
             tokenClient = google.accounts.oauth2.initTokenClient({
@@ -412,6 +417,88 @@
             tokenClient.requestAccessToken();
         };
         
+        async function parseEmailWithGemini(subject, from, snippet) {
+            try {
+                const prompt = `You are an expert email parser for job application tracking. Extract the company name and job role from this job application confirmation email.
+
+Email Details:
+- Subject: ${subject}
+- From: ${from}
+- Preview: ${snippet}
+
+Instructions:
+1. Extract the COMPANY NAME (not the ATS system like Greenhouse, Lever, Workday, etc.)
+2. Extract the JOB ROLE/POSITION TITLE
+3. If you can't find either, return null for that field
+4. Return ONLY valid JSON with no markdown formatting
+
+Return format (ONLY JSON, no other text):
+{
+  "company": "CompanyName",
+  "role": "Job Title"
+}
+
+Examples:
+- If subject is "Your Application To Microsoft - Software Engineer Intern", return {"company": "Microsoft", "role": "Software Engineer Intern"}
+- If subject is "Application received for Software Engineer at Google", return {"company": "Google", "role": "Software Engineer"}
+- If from is "jobs@greenhouse.io" and subject mentions "Application to Stripe", extract Stripe as company, not Greenhouse
+
+Return the JSON now:`;
+
+                const response = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        contents: [{
+                            parts: [{
+                                text: prompt
+                            }]
+                        }],
+                        generationConfig: {
+                            temperature: 0.1,
+                            topK: 1,
+                            topP: 1,
+                            maxOutputTokens: 256,
+                        }
+                    })
+                });
+
+                if (!response.ok) {
+                    console.error('Gemini API error:', response.status);
+                    return null;
+                }
+
+                const data = await response.json();
+
+                if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
+                    console.error('Invalid Gemini response structure');
+                    return null;
+                }
+
+                const text = data.candidates[0].content.parts[0].text;
+
+                // Remove markdown code blocks if present
+                const cleanedText = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+
+                const parsed = JSON.parse(cleanedText);
+
+                // Validate the parsed result
+                if (parsed && (parsed.company || parsed.role)) {
+                    return {
+                        company: parsed.company || '',
+                        role: parsed.role || 'Position'
+                    };
+                }
+
+                return null;
+            } catch (error) {
+                console.error('Error parsing with Gemini:', error);
+                return null;
+            }
+        }
+
         async function fetchGmailApplications() {
             if (!accessToken) return;
             
@@ -446,9 +533,9 @@
                                 }
                             }
                         );
-                        
+
                         const detail = await detailResponse.json();
-                        const parsed = parseApplicationEmail(detail);
+                        const parsed = await parseApplicationEmail(detail);
                         if (parsed) {
                             allApplications.push(parsed);
                         }
@@ -494,7 +581,7 @@
             }
         }
 
-        function parseApplicationEmail(message) {
+        async function parseApplicationEmail(message) {
             const headers = message.payload.headers;
             const subject = headers.find(h => h.name === 'Subject')?.value || '';
             const from = headers.find(h => h.name === 'From')?.value || '';
@@ -506,6 +593,28 @@
             if (skipWords.some(word => subject.toLowerCase().includes(word))) {
                 return null;
             }
+
+            // Validate date first
+            const date = new Date(dateHeader);
+            if (isNaN(date.getTime())) {
+                return null;
+            }
+
+            // Try Gemini AI parsing first
+            const geminiResult = await parseEmailWithGemini(subject, from, snippet);
+            if (geminiResult && geminiResult.company) {
+                console.log('✨ Parsed with Gemini:', geminiResult);
+                return {
+                    company: geminiResult.company,
+                    role: geminiResult.role || 'Position',
+                    status: 'applied',
+                    date: date.toLocaleDateString(),
+                    timestamp: date.getTime()
+                };
+            }
+
+            // Fall back to regex parsing if Gemini fails
+            console.log('📝 Falling back to regex parsing for:', subject);
 
             let company = '';
             let role = '';
@@ -673,12 +782,6 @@
                 if (role.toLowerCase() === 'position' || role.length < 4) {
                     role = '';
                 }
-            }
-
-            // Validate date
-            const date = new Date(dateHeader);
-            if (isNaN(date.getTime())) {
-                return null;
             }
 
             // Final validation: we must have at least a company
