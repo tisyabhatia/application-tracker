@@ -498,62 +498,117 @@
                 body = atob(message.payload.body.data.replace(/-/g, '+').replace(/_/g, '/'));
             }
             
-            body = body.substring(0, 500);
+            body = body.substring(0, 1000); // Get more of the body for better parsing
             
-            try {
-                    const response = await fetch("https://application-tracker-api-lovat.vercel.app/api/parse-email", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({ subject, from, body })
-                });
-                
-                const parsed = await response.json();
-                
-                return {
-                    company: parsed.company || 'Unknown Company',
-                    role: parsed.role || 'Position',
-                    status: 'applied',
-                    date: new Date(dateHeader).toLocaleDateString(),
-                    timestamp: new Date(dateHeader).getTime()
-                };
-            } catch (error) {
-                console.error('Error parsing with AI:', error);
-                return {
-                    company: 'Unknown Company',
-                    role: 'Position',
-                    status: 'applied',
-                    date: new Date(dateHeader).toLocaleDateString(),
-                    timestamp: new Date(dateHeader).getTime()
-                };
-            }
-        }
-        
-        function deleteApplication(index) {
-            if (confirm('Delete this application?')) {
-                let applications = JSON.parse(localStorage.getItem('applications') || '[]');
-                applications.splice(index, 1);
-                localStorage.setItem('applications', JSON.stringify(applications));
-                displayApplications();
-                displayStats();
-            }
-        }
-        
-        function clearAllApplications() {
-            if (confirm('⚠️ Delete ALL applications? This cannot be undone!')) {
-                if (confirm('Are you REALLY sure? This will delete everything!')) {
-                    localStorage.removeItem('applications');
-                    displayApplications();
-                    displayStats();
+            let company = '';
+            let role = '';
+            
+            // STEP 1: Try to extract company from subject line patterns
+            const subjectCompanyPatterns = [
+                /at ([A-Z][a-zA-Z\s&]+?)(?:\s+[-|!]|$)/,           // "at Google -" or "at Microsoft!"
+                /to ([A-Z][a-zA-Z\s&]+?)(?:\s+[-|!]|$)/,           // "to Adobe -"
+                /with ([A-Z][a-zA-Z\s&]+?)(?:\s+[-|!]|$)/,         // "with Amazon"
+                /from ([A-Z][a-zA-Z\s&]+?)(?:\s+for|\s+-|$)/,      // "from Apple for"
+                /^([A-Z][a-zA-Z\s&]+?)\s*[-:]/,                    // "Stripe - Thanks"
+            ];
+            
+            for (const pattern of subjectCompanyPatterns) {
+                const match = subject.match(pattern);
+                if (match && match[1] && match[1].length > 2 && match[1].length < 30) {
+                    const potential = match[1].trim();
+                    // Filter out generic words
+                    const genericWords = ['Application', 'Thanks', 'Thank', 'Confirmation', 'Your', 'Job', 'Position'];
+                    if (!genericWords.includes(potential)) {
+                        company = potential;
+                        break;
+                    }
                 }
             }
-        }
-        window.addEventListener('load', function() {
-            if (typeof google !== 'undefined') {
-                initializeGoogleAuth();
+            
+            // STEP 2: If no company yet, try body text
+            if (!company) {
+                const bodyCompanyPatterns = [
+                    /applied to ([A-Z][a-zA-Z\s&]+?)(?:\s+for|\s+as|\.)/i,
+                    /application to ([A-Z][a-zA-Z\s&]+?)(?:\s+for|\s+as|\.)/i,
+                    /interest in ([A-Z][a-zA-Z\s&]+?)(?:\s+and|\.)/i,
+                    /Thank you for applying to ([A-Z][a-zA-Z\s&]+)/i,
+                ];
+                
+                for (const pattern of bodyCompanyPatterns) {
+                    const match = body.match(pattern);
+                    if (match && match[1] && match[1].length > 2) {
+                        company = match[1].trim();
+                        break;
+                    }
+                }
             }
-        });
+            
+            // STEP 3: Last resort - email domain (but skip ATS domains)
+            if (!company && from.includes('@')) {
+                const domain = from.split('@')[1].split('>')[0].split('.')[0];
+                const atsDomains = ['myworkday', 'greenhouse', 'lever', 'ashbyhq', 'jobvite', 
+                                'clearcompany', 'dayforce', 'vfsglobal', 'breezy', 'smartrecruiters',
+                                'icims', 'workable', 'bamboohr', 'namely'];
+                
+                if (!atsDomains.includes(domain.toLowerCase())) {
+                    company = domain.charAt(0).toUpperCase() + domain.slice(1);
+                }
+            }
+            
+            // STEP 4: Extract role from subject
+            const rolePatterns = [
+                /for (?:the |a |an )?([^-\|!]+?)(?:\s+at|\s+position|\s+role|\s+-|\s+\||$)/i,
+                /position[:\s]+([^-\|!]+?)(?:\s+at|\s+-|\s+\||$)/i,
+                /role[:\s]+([^-\|!]+?)(?:\s+at|\s+-|\s+\||$)/i,
+                /([A-Z][a-zA-Z\s]+(?:Engineer|Developer|Manager|Intern|Analyst|Designer|Scientist)[^-\|!]*?)(?:\s+at|\s+-|\s+\(|$)/i,
+            ];
+            
+            for (const pattern of rolePatterns) {
+                const match = subject.match(pattern);
+                if (match && match[1] && match[1].trim().length > 3) {
+                    role = match[1].trim()
+                        .replace(/^Job Application for /i, '')
+                        .replace(/^Application for /i, '')
+                        .replace(/\s+\d{4}\s*$/g, '') // Remove years like "2026"
+                        .replace(/\([^)]*\)/g, '')    // Remove parentheses
+                        .trim();
+                    break;
+                }
+            }
+            
+            // STEP 5: If no role found, try body
+            if (!role || role === 'Position') {
+                const bodyRolePatterns = [
+                    /for the ([^.]+?) position/i,
+                    /for the ([^.]+?) role/i,
+                    /applied for ([^.]+?) at/i,
+                ];
+                
+                for (const pattern of bodyRolePatterns) {
+                    const match = body.match(pattern);
+                    if (match && match[1] && match[1].length > 3 && match[1].length < 80) {
+                        role = match[1].trim();
+                        break;
+                    }
+                }
+            }
+            
+            // Clean up role
+            if (role) {
+                role = role
+                    .replace(/\s+opening$/i, '')
+                    .replace(/\s+opportunity$/i, '')
+                    .trim();
+            }
+            
+            return {
+                company: company || 'Unknown Company',
+                role: role || 'Position',
+                status: 'applied',
+                date: new Date(dateHeader).toLocaleDateString(),
+                timestamp: new Date(dateHeader).getTime()
+            };
+        }
     </script>
 </body>
 </html>
