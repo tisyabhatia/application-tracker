@@ -366,27 +366,25 @@
         async function fetchGmailApplications() {
             if (!accessToken) return;
             
-            // Show loading state
             const loadingToast = document.createElement('div');
             loadingToast.innerHTML = '🔄 Syncing from Gmail...';
             loadingToast.style.cssText = 'position:fixed;top:20px;right:20px;background:#8b5cf6;color:white;padding:16px 24px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:1000;font-weight:600;';
             document.body.appendChild(loadingToast);
             
             try {
-                // Search for application confirmation emails
                 const queries = [
-                    'subject:"application received"',
-                    'subject:"thanks for applying"',
-                    'subject:"application confirmation"',
-                    'subject:"we received your application"',
-                    'subject:"application submitted"'
+                    'subject:"application received" after:2025/01/01',
+                    'subject:"thanks for applying" after:2025/01/01',
+                    'subject:"application confirmation" after:2025/01/01',
+                    'subject:"we received your application" after:2025/01/01',
+                    'subject:"application submitted" after:2025/01/01'
                 ];
                 
                 let allApplications = [];
                 
                 for (const query of queries) {
                     const response = await fetch(
-                        `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=50`,
+                        `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=100`,
                         {
                             headers: {
                                 'Authorization': `Bearer ${accessToken}`
@@ -409,14 +407,16 @@
                             
                             const detail = await detailResponse.json();
                             const parsed = parseApplicationEmail(detail);
-                            if (parsed) {
+                            if (parsed && parsed.company !== 'Unknown Company') {
                                 allApplications.push(parsed);
                             }
                         }
                     }
                 }
                 
-                // Remove duplicates and save
+                // Sort by timestamp (newest first)
+                allApplications.sort((a, b) => b.timestamp - a.timestamp);
+                
                 const existingApps = JSON.parse(localStorage.getItem('applications') || '[]');
                 const newApps = allApplications.filter(newApp => 
                     !existingApps.some(existing => 
@@ -451,33 +451,61 @@
                 document.body.removeChild(loadingToast);
                 alert('Error syncing Gmail. Check console for details.');
             }
-        }
-        
+        }        
         function parseApplicationEmail(message) {
             const headers = message.payload.headers;
             const subject = headers.find(h => h.name === 'Subject')?.value || '';
             const from = headers.find(h => h.name === 'From')?.value || '';
             const dateHeader = headers.find(h => h.name === 'Date')?.value || '';
             
-            // Extract company from "from" field
+            // Extract company - improved logic
             let company = '';
-            if (from.includes('@')) {
-                const domain = from.split('@')[1].split('>')[0];
-                company = domain.split('.')[0];
-                company = company.charAt(0).toUpperCase() + company.slice(1);
+            
+            // First try to get from subject line (most reliable)
+            const companyPatterns = [
+                /at ([A-Z][a-zA-Z\s]+?)(?:\s+-|\s+\||$)/,  // "at Company Name -" or "at Company |"
+                /with ([A-Z][a-zA-Z\s]+?)(?:\s+-|\s+\||$)/, // "with Company Name"
+                /to ([A-Z][a-zA-Z\s]+?)(?:\s+-|\s+\||$)/,   // "to Company Name"
+                /from ([A-Z][a-zA-Z\s]+?)(?:\s+for|\s+-|$)/ // "from Company Name for"
+            ];
+            
+            for (const pattern of companyPatterns) {
+                const match = subject.match(pattern);
+                if (match && match[1] && match[1].length > 2) {
+                    company = match[1].trim();
+                    break;
+                }
             }
             
-            // Try to extract role from subject
-            let role = 'Position'; // Default
+            // If still no company, try email domain (fallback)
+            if (!company && from.includes('@')) {
+                const domain = from.split('@')[1].split('>')[0].split('.')[0];
+                // Skip generic ATS domains
+                const genericDomains = ['myworkday', 'greenhouse', 'lever', 'ashbyhq', 'jobvite', 'clearcompany', 'dayforce', 'vfsglobal'];
+                if (!genericDomains.includes(domain.toLowerCase())) {
+                    company = domain.charAt(0).toUpperCase() + domain.slice(1);
+                }
+            }
+            
+            // If still empty, try to parse from beginning of subject
+            if (!company) {
+                const firstWord = subject.split(/[\s:-]/)[0];
+                if (firstWord && firstWord.length > 2 && /^[A-Z]/.test(firstWord)) {
+                    company = firstWord;
+                }
+            }
+            
+            // Extract role - improved
+            let role = 'Position';
             const rolePatterns = [
-                /for (.*?) at/i,
-                /for (.*?) -/i,
-                /position[:\s]+(.*?)(?:\s+at|\s+-|$)/i
+                /for (?:the |a )?([^-\|]+?)(?:\s+at|\s+position|\s+-|\s+\||$)/i,
+                /position[:\s]+([^-\|]+?)(?:\s+at|\s+-|\s+\||$)/i,
+                /([A-Z][a-zA-Z\s]+(?:Engineer|Developer|Manager|Intern|Analyst)[^-\|]*?)(?:\s+at|\s+-|\s+\||$)/i
             ];
             
             for (const pattern of rolePatterns) {
                 const match = subject.match(pattern);
-                if (match && match[1]) {
+                if (match && match[1] && match[1].trim().length > 3) {
                     role = match[1].trim();
                     break;
                 }
@@ -486,19 +514,14 @@
             const date = new Date(dateHeader).toLocaleDateString();
             
             return {
-                company: company,
+                company: company || 'Unknown Company',
                 role: role,
                 status: 'applied',
-                date: date
+                date: date,
+                timestamp: new Date(dateHeader).getTime() // Add timestamp for sorting
             };
         }
-        
-        // Initialize on page load
-        window.addEventListener('load', function() {
-            if (typeof google !== 'undefined') {
-                initializeGoogleAuth();
-            }
-        });
     </script>
 </body>
 </html>
+
