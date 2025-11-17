@@ -193,20 +193,19 @@
         
         <div class="stats-section">
             <div class="stats-container" id="statsContainer">
-                <!-- Stats will be inserted here -->
             </div>
         </div>
         
         <div class="history-section">
             <h2>application history</h2>
             <div class="button-container">
-                <button onClick="logApplication()">log application</button>
-                <button onClick="syncGmail()" style="background: linear-gradient(135deg, #a78bfa 0%, #8b5cf6 100%);">sync from gmail</button>
+                <button onclick="logApplication()">log application</button>
+                <button onclick="syncGmail()" style="background: linear-gradient(135deg, #a78bfa 0%, #8b5cf6 100%);">sync from gmail</button>
             </div>
         <div class="app-list" id="applicationList">
         </div>
         <div class="button-container">
-            <button onClick="clearAllApplications()" class="clear-all-btn">clear all data</button>
+            <button onclick="clearAllApplications()" class="clear-all-btn">clear all data</button>
         </div>
         </div>
     </div>
@@ -267,6 +266,26 @@
                 displayStats();
             }
         }
+        
+        function deleteApplication(index) {
+            if (confirm('Delete this application?')) {
+                let applications = JSON.parse(localStorage.getItem('applications') || '[]');
+                applications.splice(index, 1);
+                localStorage.setItem('applications', JSON.stringify(applications));
+                displayApplications();
+                displayStats();
+            }
+        }
+        
+        function clearAllApplications() {
+            if (confirm('⚠️ Delete ALL applications? This cannot be undone!')) {
+                if (confirm('Are you REALLY sure? This will delete everything!')) {
+                    localStorage.removeItem('applications');
+                    displayApplications();
+                    displayStats();
+                }
+            }
+        }
 
         window.addEventListener('DOMContentLoaded', function() {
             displayApplications();
@@ -315,6 +334,7 @@
                 </div>
             `;
         }
+        
         function checkURLParams() {
             const params = new URLSearchParams(window.location.search);
             if (params.has('company')) {
@@ -342,7 +362,6 @@
         });
         
         window.addEventListener('message', function(event) {
-            // Security check - only accept from your bookmarklet
             if (event.data && event.data.type === 'NEW_APPLICATION') {
                 const app = {
                     company: event.data.company,
@@ -396,20 +415,22 @@
             if (!accessToken) return;
             
             const loadingToast = document.createElement('div');
+            loadingToast.id = 'loadingToast';
             loadingToast.innerHTML = '🔄 Syncing from Gmail...';
             loadingToast.style.cssText = 'position:fixed;top:20px;right:20px;background:#8b5cf6;color:white;padding:16px 24px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:1000;font-weight:600;';
             document.body.appendChild(loadingToast);
             
             try {
+                // Better search queries to find more application emails
                 const queries = [
-                    'subject:"application received" after:2025/01/01',
-                    'subject:"thanks for applying" after:2025/01/01',
-                    'subject:"application confirmation" after:2025/01/01',
-                    'subject:"we received your application" after:2025/01/01',
-                    'subject:"application submitted" after:2025/01/01'
+                    'subject:(application OR applied OR applying) after:2024/09/01',
+                    'subject:"thank you for" after:2024/09/01',
+                    'subject:confirmation after:2024/09/01',
+                    'from:(noreply OR jobs OR recruiting OR talent) after:2024/09/01'
                 ];
                 
                 let allApplications = [];
+                let seenIds = new Set();
                 
                 for (const query of queries) {
                     const response = await fetch(
@@ -425,6 +446,9 @@
                     
                     if (data.messages) {
                         for (const message of data.messages) {
+                            if (seenIds.has(message.id)) continue;
+                            seenIds.add(message.id);
+                            
                             const detailResponse = await fetch(
                                 `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}`,
                                 {
@@ -435,7 +459,7 @@
                             );
                             
                             const detail = await detailResponse.json();
-                            const parsed = await parseApplicationEmail(detail);
+                            const parsed = parseApplicationEmail(detail);
                             if (parsed && parsed.company !== 'Unknown Company') {
                                 allApplications.push(parsed);
                             }
@@ -443,7 +467,6 @@
                     }
                 }
                 
-                // Sort by timestamp (newest first)
                 allApplications.sort((a, b) => b.timestamp - a.timestamp);
                 
                 const existingApps = JSON.parse(localStorage.getItem('applications') || '[]');
@@ -477,12 +500,13 @@
                 
             } catch (error) {
                 console.error('Error fetching Gmail:', error);
-                document.body.removeChild(loadingToast);
+                const toast = document.getElementById('loadingToast');
+                if (toast) document.body.removeChild(toast);
                 alert('Error syncing Gmail. Check console for details.');
             }
         }
 
-        async function parseApplicationEmail(message) {
+        function parseApplicationEmail(message) {
             const headers = message.payload.headers;
             const subject = headers.find(h => h.name === 'Subject')?.value || '';
             const from = headers.find(h => h.name === 'From')?.value || '';
@@ -498,106 +522,67 @@
                 body = atob(message.payload.body.data.replace(/-/g, '+').replace(/_/g, '/'));
             }
             
-            body = body.substring(0, 1000); // Get more of the body for better parsing
+            body = body.substring(0, 1500);
             
             let company = '';
             let role = '';
             
-            // STEP 1: Try to extract company from subject line patterns
-            const subjectCompanyPatterns = [
-                /at ([A-Z][a-zA-Z\s&]+?)(?:\s+[-|!]|$)/,           // "at Google -" or "at Microsoft!"
-                /to ([A-Z][a-zA-Z\s&]+?)(?:\s+[-|!]|$)/,           // "to Adobe -"
-                /with ([A-Z][a-zA-Z\s&]+?)(?:\s+[-|!]|$)/,         // "with Amazon"
-                /from ([A-Z][a-zA-Z\s&]+?)(?:\s+for|\s+-|$)/,      // "from Apple for"
-                /^([A-Z][a-zA-Z\s&]+?)\s*[-:]/,                    // "Stripe - Thanks"
+            // Extract company - try multiple methods
+            // Method 1: Common subject patterns
+            const companyPatterns = [
+                /at ([A-Z][a-zA-Z\s&.]+?)(?:\s+[-–|!]|$)/,
+                /to ([A-Z][a-zA-Z\s&.]+?)(?:\s+[-–|!]|$)/,
+                /with ([A-Z][a-zA-Z\s&.]+?)(?:\s+[-–|!])/,
+                /^([A-Z][a-zA-Z\s&.]+?)\s*[-–:]/,
+                /from ([A-Z][a-zA-Z\s&.]+?)(?:\s+[-–])/
             ];
             
-            for (const pattern of subjectCompanyPatterns) {
+            for (const pattern of companyPatterns) {
                 const match = subject.match(pattern);
-                if (match && match[1] && match[1].length > 2 && match[1].length < 30) {
-                    const potential = match[1].trim();
-                    // Filter out generic words
-                    const genericWords = ['Application', 'Thanks', 'Thank', 'Confirmation', 'Your', 'Job', 'Position'];
-                    if (!genericWords.includes(potential)) {
+                if (match && match[1]) {
+                    let potential = match[1].trim();
+                    const badWords = ['Application', 'Thanks', 'Thank', 'Confirmation', 'Your', 'Job', 'Position', 'Application received', 'Applying'];
+                    if (!badWords.some(word => potential.includes(word)) && potential.length > 2 && potential.length < 35) {
                         company = potential;
                         break;
                     }
                 }
             }
             
-            // STEP 2: If no company yet, try body text
-            if (!company) {
-                const bodyCompanyPatterns = [
-                    /applied to ([A-Z][a-zA-Z\s&]+?)(?:\s+for|\s+as|\.)/i,
-                    /application to ([A-Z][a-zA-Z\s&]+?)(?:\s+for|\s+as|\.)/i,
-                    /interest in ([A-Z][a-zA-Z\s&]+?)(?:\s+and|\.)/i,
-                    /Thank you for applying to ([A-Z][a-zA-Z\s&]+)/i,
-                ];
-                
-                for (const pattern of bodyCompanyPatterns) {
-                    const match = body.match(pattern);
-                    if (match && match[1] && match[1].length > 2) {
-                        company = match[1].trim();
-                        break;
+            // Method 2: From email domain
+            if (!company && from.includes('@')) {
+                const emailMatch = from.match(/@([a-zA-Z0-9-]+)\./);
+                if (emailMatch) {
+                    const domain = emailMatch[1];
+                    const badDomains = ['myworkday', 'greenhouse', 'lever', 'ashbyhq', 'jobvite', 'mail', 'email', 'noreply'];
+                    if (!badDomains.includes(domain.toLowerCase())) {
+                        company = domain.charAt(0).toUpperCase() + domain.slice(1);
                     }
                 }
             }
             
-            // STEP 3: Last resort - email domain (but skip ATS domains)
-            if (!company && from.includes('@')) {
-                const domain = from.split('@')[1].split('>')[0].split('.')[0];
-                const atsDomains = ['myworkday', 'greenhouse', 'lever', 'ashbyhq', 'jobvite', 
-                                'clearcompany', 'dayforce', 'vfsglobal', 'breezy', 'smartrecruiters',
-                                'icims', 'workable', 'bamboohr', 'namely'];
-                
-                if (!atsDomains.includes(domain.toLowerCase())) {
-                    company = domain.charAt(0).toUpperCase() + domain.slice(1);
-                }
-            }
-            
-            // STEP 4: Extract role from subject
+            // Extract role
             const rolePatterns = [
-                /for (?:the |a |an )?([^-\|!]+?)(?:\s+at|\s+position|\s+role|\s+-|\s+\||$)/i,
-                /position[:\s]+([^-\|!]+?)(?:\s+at|\s+-|\s+\||$)/i,
-                /role[:\s]+([^-\|!]+?)(?:\s+at|\s+-|\s+\||$)/i,
-                /([A-Z][a-zA-Z\s]+(?:Engineer|Developer|Manager|Intern|Analyst|Designer|Scientist)[^-\|!]*?)(?:\s+at|\s+-|\s+\(|$)/i,
+                /for (?:the |a |an )?([^-–|!]+?)(?:\s+at|\s+position|\s+role|\s*[-–|!]|$)/i,
+                /position[:\s]+([^-–|!]+?)(?:\s+at|\s*[-–|!]|$)/i,
+                /([A-Z][a-zA-Z\s]+?(?:Engineer|Developer|Manager|Intern|Analyst|Designer|Scientist|Architect)[^-–|!]*?)(?:\s+at|\s*[-–|]|$)/i,
             ];
             
             for (const pattern of rolePatterns) {
                 const match = subject.match(pattern);
                 if (match && match[1] && match[1].trim().length > 3) {
                     role = match[1].trim()
-                        .replace(/^Job Application for /i, '')
-                        .replace(/^Application for /i, '')
-                        .replace(/\s+\d{4}\s*$/g, '') // Remove years like "2026"
-                        .replace(/\([^)]*\)/g, '')    // Remove parentheses
+                        .replace(/^(Job Application for|Application for|Applied for)\s*/i, '')
+                        .replace(/\s*\d{4}\s*$/g, '')
+                        .replace(/\([^)]*\)/g, '')
                         .trim();
-                    break;
+                    if (role.length > 3 && role.length < 80) break;
                 }
             }
             
-            // STEP 5: If no role found, try body
-            if (!role || role === 'Position') {
-                const bodyRolePatterns = [
-                    /for the ([^.]+?) position/i,
-                    /for the ([^.]+?) role/i,
-                    /applied for ([^.]+?) at/i,
-                ];
-                
-                for (const pattern of bodyRolePatterns) {
-                    const match = body.match(pattern);
-                    if (match && match[1] && match[1].length > 3 && match[1].length < 80) {
-                        role = match[1].trim();
-                        break;
-                    }
-                }
-            }
-            
-            // Clean up role
             if (role) {
                 role = role
-                    .replace(/\s+opening$/i, '')
-                    .replace(/\s+opportunity$/i, '')
+                    .replace(/\s+(opening|opportunity)$/i, '')
                     .trim();
             }
             
@@ -609,6 +594,12 @@
                 timestamp: new Date(dateHeader).getTime()
             };
         }
+        
+        window.addEventListener('load', function() {
+            if (typeof google !== 'undefined') {
+                initializeGoogleAuth();
+            }
+        });
     </script>
 </body>
 </html>
