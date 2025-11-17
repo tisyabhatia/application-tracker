@@ -54,15 +54,13 @@
             margin-top: 20px;
         }
         .app-item {
+            position: relative;
             padding: 18px;
             background: linear-gradient(135deg, #fff5f8 0%, #f0f9ff 100%);
             margin-bottom: 12px;
             border-radius: 12px;
             border-left: 4px solid #ff6b9d;
             transition: transform 0.2s;
-        }
-        .app-item:hover {
-            transform: translateX(5px);
         }
         .app-item strong {
             color: #ff6b9d;
@@ -160,6 +158,33 @@
                 opacity: 1;
             }
         }
+        .delete-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #fee2e2;
+            color: #991b1b;
+            border: none;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .delete-btn:hover {
+            background: #991b1b;
+            color: white;
+            transform: scale(1.1);
+        }
+        .clear-all-btn {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            margin-top: 20px;
+        }
     </style>
 </head>
 <body>
@@ -178,8 +203,11 @@
                 <button onClick="logApplication()">log application</button>
                 <button onClick="syncGmail()" style="background: linear-gradient(135deg, #a78bfa 0%, #8b5cf6 100%);">sync from gmail</button>
             </div>
-            <div class="app-list" id="applicationList">
-            </div>
+        <div class="app-list" id="applicationList">
+        </div>
+        <div class="button-container">
+            <button onClick="clearAllApplications()" class="clear-all-btn">clear all data</button>
+        </div>
         </div>
     </div>
 
@@ -208,7 +236,7 @@
             displayApplications();
             displayStats();
         }
-
+        
         function displayApplications() {
             const applications = JSON.parse(localStorage.getItem('applications') || '[]');
             const listDiv = document.getElementById('applicationList');
@@ -217,9 +245,10 @@
                 listDiv.innerHTML = '<p style="color: #999;">no applications yet. click the button to log your first one!</p>';
                 return;
             }
-
+        
             listDiv.innerHTML = applications.map((app, index) => `
                 <div class="app-item">
+                    <button class="delete-btn" onclick="deleteApplication(${applications.length - 1 - index})" title="Delete">×</button>
                     <strong>${app.company}</strong> - ${app.role}
                     <span class="status-badge status-${app.status || 'applied'}" onclick="updateStatus(${applications.length - 1 - index})" style="cursor: pointer;">${app.status || 'applied'}</span><br>
                     <small style="color: #666;">Applied: ${app.date}</small>
@@ -521,7 +550,33 @@
                 timestamp: new Date(dateHeader).getTime() // Add timestamp for sorting
             };
         }
+        
+        function deleteApplication(index) {
+            if (confirm('Delete this application?')) {
+                let applications = JSON.parse(localStorage.getItem('applications') || '[]');
+                applications.splice(index, 1);
+                localStorage.setItem('applications', JSON.stringify(applications));
+                displayApplications();
+                displayStats();
+            }
+        }
+        
+        function clearAllApplications() {
+            if (confirm('⚠️ Delete ALL applications? This cannot be undone!')) {
+                if (confirm('Are you REALLY sure? This will delete everything!')) {
+                    localStorage.removeItem('applications');
+                    displayApplications();
+                    displayStats();
+                }
+            }
+        }
+        window.addEventListener('load', function() {
+            if (typeof google !== 'undefined') {
+                initializeGoogleAuth();
+            }
+        });
     </script>
 </body>
 </html>
+
 
